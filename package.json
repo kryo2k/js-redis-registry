@@ -1,6 +1,6 @@
 {
   "name": "js-redis-registry",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "A system configuration registry powered by Redis. Includes pubsub support to keep syndicated instances in sync. Made in TypeScript / ES6.",
   "main": "node index.js",
   "scripts": {

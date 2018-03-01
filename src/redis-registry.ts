@@ -94,7 +94,11 @@ export class Registry extends events.EventEmitter {
 
   // gets a new redis client instance
   protected getClient () : redis.RedisClient {
-    return new redis.RedisClient(this.clientConfig);
+    let client = new redis.RedisClient(this.clientConfig);
+    client.on('error', (err: Error) => this.emitError(err)); // relay redis errors as our own errors
+    // client.on('connect', () => this.emit('redis_connect', client, this.clientConfig));
+    // client.on('end', () => this.emit('redis_end', client, this.clientConfig));
+    return client;
   }
 
   // publish a message using a client instance.
