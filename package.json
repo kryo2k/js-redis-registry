@@ -1,0 +1,34 @@
+{
+  "name": "js-redis-registry",
+  "version": "1.0.1",
+  "description": "A system configuration registry powered by Redis. Includes pubsub support to keep syndicated instances in sync. Made in TypeScript / ES6.",
+  "main": "node index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "build": "tsc -p tsconfig.json && mv dist/redis-registry.d.ts index.d.ts"
+  },
+  "keywords": [
+    "configuration",
+    "registry",
+    "pubsub"
+  ],
+  "author": "Hans Doller <kryo2k@gmail.com>",
+  "license": "GPLv3",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/kryo2k/js-redis-registry.git"
+  },
+  "devDependencies": {
+    "@types/node": "^9.4.6",
+    "@types/redis": "^2.8.6",
+    "@types/uuid": "^3.4.3",
+    "mocha": "^5.0.1",
+    "ts-node": "^3.3.0",
+    "typescript": "^2.7.2"
+  },
+  "dependencies": {
+    "js-binary-model": "^1.0.1",
+    "redis": "^2.8.0",
+    "uuid": "^3.2.1"
+  }
+}
