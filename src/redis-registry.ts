@@ -3,24 +3,58 @@ import * as events from 'events';
 import * as uuid from 'uuid/v4';
 import { BinaryModel, DataType } from 'js-binary-model';
 
+/**
+* Message object to contain pubsub encoded messages.
+*/
 export const MessageModel = new BinaryModel({
   sender: DataType.STRING,
   arguments: DataType.JSON
 });
 
+/**
+* Encoding to use in messages
+*/
 export const MessageEncoding    = 'base64';
+
+/**
+* Redis pub channel for config:set action
+*/
 export const ChannelConfigSet   = 'ConfigSet';
+
+/**
+* Redis pub channel for config:clear action
+*/
 export const ChannelConfigClear = 'ConfigClear';
 
-export class SystemRegistry extends events.EventEmitter {
+/**
+* Main redis registry object.
+*/
+export class Registry extends events.EventEmitter {
 
+  /**
+  * Configuration to use for connecting to redis.
+  */
   clientConfig : redis.ClientOpts;
+
+  /**
+  * Key namespace to use for this Registry object.
+  */
   keyspace : string;
+
+  /**
+  * Local key:value store to memoize state of configuration.
+  */
   store : { [key: string] : any } = {};
 
+  // Internal subscriber redis client, populated once monitoring is started.
   private subscriber : redis.RedisClient | null = null;
+
+  // Unique id for this instance. Used to determine if pubsub messages are received by same sender.
   private uniqId : string = uuid();
 
+  /**
+  * Construct registry class.
+  */
   constructor (clientConfig : redis.ClientOpts, keyspace: string = 'global') {
     super();
 
@@ -31,32 +65,39 @@ export class SystemRegistry extends events.EventEmitter {
     this.pull(() => this.emit('ready'));
   }
 
-  get keyConfig () : string {
+  // key being used for configuration
+  protected get keyConfig () : string {
     return 'config:' + this.keyspace;
   }
 
+  // shortcut to emit error events
   protected emitError(err: Error) : void {
     this.emit('error', err);
   }
 
+  // shortcut to emit update events
   protected emitUpdated() : void {
     this.emit('updated');
   }
 
+  // shortcut to emit key clear events
   protected emitCleared(key: string) : void {
     this.emit('cleared', key);
     this.emitUpdated();
   }
 
+  // shortcut to emit key set events
   protected emitSet(key: string, value: any, previousValue: any) : void {
     this.emit('set', key, value, previousValue);
     this.emitUpdated();
   }
 
+  // gets a new redis client instance
   protected getClient () : redis.RedisClient {
     return new redis.RedisClient(this.clientConfig);
   }
 
+  // publish a message using a client instance.
   protected publish(cli : redis.RedisClient, channel: string, ... args: any[]) : void {
     cli.publish(channel, MessageModel.encode({
       sender: this.uniqId,
@@ -64,6 +105,7 @@ export class SystemRegistry extends events.EventEmitter {
     }).toString(MessageEncoding));
   }
 
+  // applies an encoded value to local keystore
   protected applyEncodedKeyValue(key: string, value: string) : void {
     try { // decode all stored values
       this.store[key] = JSON.parse(value);
@@ -72,31 +114,12 @@ export class SystemRegistry extends events.EventEmitter {
     }
   }
 
-  protected pull(onSuccess?: Function) : void {
-
-    this.store = {}; // reset the store
-
-    let client = this.getClient();
-    client.hgetall(this.keyConfig, (err: Error|null, hash: { [key: string] : string } | null) => {
-      client.quit(); // no longer needed
-
-      if(err) return this.emitError(err);
-
-      // update store with decoded keys values
-      if(hash)
-        Object.keys(hash).forEach(key => this.applyEncodedKeyValue(key, hash[key]));
-
-      // signal local update
-      this.emitUpdated();
-
-      if(onSuccess) onSuccess();
-    });
-  }
-
+  // returns keyspaced channel name
   protected keySpaceChannel(channel : string) : string {
     return `${channel}:${this.keyspace}`;
   }
 
+  // handles messages from pubsub subscriptions
   protected onSubscriberMessage(channel: string, message: string) : void {
 
     const
@@ -129,6 +152,37 @@ export class SystemRegistry extends events.EventEmitter {
     }
   }
 
+  /**
+  * Pull latest settings in redis key for current namespace. Useful if
+  * namespace and/or redis configuration changes.
+  */
+  pull (onSuccess?: Function) : Registry {
+
+    this.store = {}; // reset the store
+
+    let client = this.getClient();
+    client.hgetall(this.keyConfig, (err: Error|null, hash: { [key: string] : string } | null) => {
+      client.quit(); // no longer needed
+
+      if(err) return this.emitError(err);
+
+      // update store with decoded keys values
+      if(hash)
+        Object.keys(hash).forEach(key => this.applyEncodedKeyValue(key, hash[key]));
+
+      // signal local update
+      this.emitUpdated();
+
+      if(onSuccess) onSuccess();
+    });
+
+    return this;
+  }
+
+  /**
+  * Watches a key for changes. Callback is fired whenever key is changed. Returns
+  * a function used to clean up and kill the listener.
+  */
   watch (key : string, onModified: (newValue : any) => void) : Function {
     let
     ended = false;
@@ -155,6 +209,9 @@ export class SystemRegistry extends events.EventEmitter {
     };
   }
 
+  /**
+  * Gets the current value of a key.
+  */
   get (key: string, defaultValue: any = undefined) : any {
 
     if(!this.store.hasOwnProperty(key))
@@ -163,7 +220,10 @@ export class SystemRegistry extends events.EventEmitter {
     return this.store[key];
   }
 
-  set (key: string, value : any) : SystemRegistry {
+  /**
+  * Sets the current value of a key. Propagates this change to all syndicated registries.
+  */
+  set (key: string, value : any) : Registry {
 
     let previous = this.store[key];
 
@@ -188,7 +248,10 @@ export class SystemRegistry extends events.EventEmitter {
     return this;
   }
 
-  clear (key: string) : SystemRegistry {
+  /**
+  * Clears the setting on a key. Propagates this change to all syndicated registries.
+  */
+  clear (key: string) : Registry {
 
     if(this.store.hasOwnProperty(key)) // unset if exists
       delete this.store[key];
@@ -209,7 +272,10 @@ export class SystemRegistry extends events.EventEmitter {
     return this;
   }
 
-  startMonitor() : SystemRegistry {
+  /**
+  * Starts the monitoring service (via pubsub).
+  */
+  startMonitor() : Registry {
 
     if(this.subscriber) // already has an active subscriber client
       return this;
@@ -225,7 +291,10 @@ export class SystemRegistry extends events.EventEmitter {
     return this;
   }
 
-  stopMonitor(cb?: redis.Callback<'OK'>) : SystemRegistry {
+  /**
+  * Ends the monitoring service.
+  */
+  stopMonitor(cb?: redis.Callback<'OK'>) : Registry {
 
     if(!this.subscriber) // already has an active subscriber client
       return this;
@@ -237,4 +306,4 @@ export class SystemRegistry extends events.EventEmitter {
   }
 };
 
-export default SystemRegistry;
+export default Registry;
